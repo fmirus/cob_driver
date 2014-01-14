@@ -174,9 +174,9 @@ class NodeClass
 			}
 			if(!n.hasParam("zero_waittime"))
             {
-                ROS_WARN("No parameter zero_waittime on parameter server. Using default value [0.05].");
+                ROS_WARN("No parameter zero_waittime on parameter server. Using default value [0.02].");
             }
-            n.param("zero_waittime", wait_time_until_zero_cmd_, (double)0.05);
+            n.param("zero_waittime", wait_time_until_zero_cmd_, (double)0.02);
 
 			IniFile iniFile;
 			iniFile.SetFileName(sIniDirectory + "Platform.ini", "PltfHardwareCoB3.h");

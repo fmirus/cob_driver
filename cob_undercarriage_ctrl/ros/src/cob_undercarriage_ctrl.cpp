@@ -118,6 +118,9 @@ class NodeClass
 		double x_rob_m_, y_rob_m_, theta_rob_rad_; // accumulated motion of robot since startup
     	int iwatchdog_;
     	double 	vel_x_rob_last_, vel_y_rob_last_, vel_theta_rob_last_; //save velocities for better odom calculation
+
+    	ros::Time time_of_last_twist_cmd_;	// time-stamp when the last twist commmand has been received
+    	double wait_time_until_zero_cmd_;   // time interval to wait for a nonzero twist command to publish after a zero command has been received 
 		
 		int m_iNumJoints;
 		
@@ -169,6 +172,11 @@ class NodeClass
 				sIniDirectory = "Platform/IniFiles/";
 				ROS_WARN("IniDirectory not found on Parameter-Server, using default value: %s", sIniDirectory.c_str());
 			}
+			if(!n.hasParam("zero_waittime"))
+            {
+                ROS_WARN("No parameter zero_waittime on parameter server. Using default value [0.05].");
+            }
+            n.param("zero_waittime", wait_time_until_zero_cmd_, (double)0.05);
 
 			IniFile iniFile;
 			iniFile.SetFileName(sIniDirectory + "Platform.ini", "PltfHardwareCoB3.h");
@@ -221,32 +229,63 @@ class NodeClass
 		void topicCallbackTwistCmd(const geometry_msgs::Twist::ConstPtr& msg)
 		{
 			double vx_cmd_mms, vy_cmd_mms, w_cmd_rads;
-
-			iwatchdog_ = 0;			
-
-			// controller expects velocities in mm/s, ROS works with SI-Units -> convert
-			// ToDo: rework Controller Class to work with SI-Units
-			vx_cmd_mms = msg->linear.x*1000.0;
-			vy_cmd_mms = msg->linear.y*1000.0;
-			w_cmd_rads = msg->angular.z;
-
-			// only process if controller is already initialized
-			if (is_initialized_bool_ && drive_chain_diagnostic_==diagnostic_status_lookup_.OK)
-            {
-				ROS_DEBUG("received new velocity command [cmdVelX=%3.5f,cmdVelY=%3.5f,cmdVelTh=%3.5f]", 
-					msg->linear.x, msg->linear.y, msg->angular.z);
-
-				// Set desired value for Plattform Velocity to UndercarriageCtrl (setpoint setting)
-				ucar_ctrl_->SetDesiredPltfVelocity(vx_cmd_mms, vy_cmd_mms, w_cmd_rads, 0.0);
-				// ToDo: last value (0.0) is not used anymore --> remove from interface
+			bool publish_cmd;
+			
+			if(msg->linear.x != 0 || msg->linear.y != 0 || msg->angular.z != 0)
+			{
+				// we subscribed to a nonzero twist command, so we can continue publishing
+				publish_cmd = true;
 			}
 			else
-			{	
-				// Set desired value for Plattform Velocity to zero (setpoint setting)
-				ucar_ctrl_->SetDesiredPltfVelocity( 0.0, 0.0, 0.0, 0.0);
-				// ToDo: last value (0.0) is not used anymore --> remove from interface
-				ROS_DEBUG("Forced platform-velocity cmds to zero");
+			{
+				// stop publishing and wait for nonzero twist cmd
+				publish_cmd = false;
 			}
+			
+			if(!publish_cmd)
+			{
+				// watchdog to prevent shaking behaviour caused by zero-commands after optimizeBand from EbandLocal-Planner failed
+				if(ros::Time::now().toSec() - time_of_last_twist_cmd_.toSec() < wait_time_until_zero_cmd_)
+				{
+					// if we subscribed to a nonzero twist cmd in a given time interval since the last zero command we continue publishing
+					if(msg->linear.x != 0 || msg->linear.y != 0 || msg->angular.z != 0)
+					{
+						publish_cmd = true;
+					}
+				}
+			}
+
+			time_of_last_twist_cmd_ = ros::Time::now();
+
+			if(publish_cmd)
+			{
+				iwatchdog_ = 0;			
+
+				// controller expects velocities in mm/s, ROS works with SI-Units -> convert
+				// ToDo: rework Controller Class to work with SI-Units
+				vx_cmd_mms = msg->linear.x*1000.0;
+				vy_cmd_mms = msg->linear.y*1000.0;
+				w_cmd_rads = msg->angular.z;
+
+				// only process if controller is already initialized
+				if (is_initialized_bool_ && drive_chain_diagnostic_==diagnostic_status_lookup_.OK)
+	            {
+					ROS_DEBUG("received new velocity command [cmdVelX=%3.5f,cmdVelY=%3.5f,cmdVelTh=%3.5f]", 
+						msg->linear.x, msg->linear.y, msg->angular.z);
+
+					// Set desired value for Plattform Velocity to UndercarriageCtrl (setpoint setting)
+					ucar_ctrl_->SetDesiredPltfVelocity(vx_cmd_mms, vy_cmd_mms, w_cmd_rads, 0.0);
+					// ToDo: last value (0.0) is not used anymore --> remove from interface
+				}
+				else
+				{	
+					// Set desired value for Plattform Velocity to zero (setpoint setting)
+					ucar_ctrl_->SetDesiredPltfVelocity( 0.0, 0.0, 0.0, 0.0);
+					// ToDo: last value (0.0) is not used anymore --> remove from interface
+					ROS_DEBUG("Forced platform-velocity cmds to zero");
+				}
+			}
+			
 		}
 
 		// Listen for Emergency Stop

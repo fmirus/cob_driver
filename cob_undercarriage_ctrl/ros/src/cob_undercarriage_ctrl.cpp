@@ -85,6 +85,7 @@ class NodeClass
     public:
 	    // create a handle for this node, initialize node
 	    ros::NodeHandle n;
+    	    ros::NodeHandle pnh_;
                 
         // topics to publish
         ros::Publisher topic_pub_joint_state_cmd_;	// cmd issued for single joints of undercarriage
@@ -129,6 +130,7 @@ class NodeClass
         // Constructor
         NodeClass()
         {
+			pnh_ = ros::NodeHandle("~");
 			// initialization of variables
 			is_initialized_bool_ = false;
 			iwatchdog_ = 0;
@@ -172,11 +174,11 @@ class NodeClass
 				sIniDirectory = "Platform/IniFiles/";
 				ROS_WARN("IniDirectory not found on Parameter-Server, using default value: %s", sIniDirectory.c_str());
 			}
-			if(!n.hasParam("zero_waittime"))
+			if(!pnh_.hasParam("zero_waittime"))
             {
                 ROS_WARN("No parameter zero_waittime on parameter server. Using default value [0.02].");
             }
-            n.param("zero_waittime", wait_time_until_zero_cmd_, (double)0.02);
+            pnh_.param("zero_waittime", wait_time_until_zero_cmd_, (double)0.02);
 
 			IniFile iniFile;
 			iniFile.SetFileName(sIniDirectory + "Platform.ini", "PltfHardwareCoB3.h");
@@ -230,20 +232,25 @@ class NodeClass
 		{
 			double vx_cmd_mms, vy_cmd_mms, w_cmd_rads;
 			bool publish_cmd;
+
+			ROS_ERROR("-----START Twist callback!-----");
 			
 			if(msg->linear.x != 0 || msg->linear.y != 0 || msg->angular.z != 0)
 			{
 				// we subscribed to a nonzero twist command, so we can continue publishing
 				publish_cmd = true;
+				//ROS_ERROR("Received a nonzero cmd so enable publishing");
 			}
 			else
 			{
 				// stop publishing and wait for nonzero twist cmd
 				publish_cmd = false;
+				ROS_ERROR("Received a zero cmd so now waiting for nonzero cmd and stop publishing");
 			}
 			
 			if(!publish_cmd)
 			{
+				ROS_ERROR("BEGIN if statement for disabled publishing");
 				// watchdog to prevent shaking behaviour caused by zero-commands after optimizeBand from EbandLocal-Planner failed
 				if(ros::Time::now().toSec() - time_of_last_twist_cmd_.toSec() < wait_time_until_zero_cmd_)
 				{
@@ -251,14 +258,32 @@ class NodeClass
 					if(msg->linear.x != 0 || msg->linear.y != 0 || msg->angular.z != 0)
 					{
 						publish_cmd = true;
+						ROS_ERROR("Received a nonzero cmd so RE-enable publishing");
+					}
+					else
+					{
+						// Set desired value for Plattform Velocity to zero (setpoint setting)
+						ROS_ERROR_STREAM("Received another zero cmd within the waittime of " << wait_time_until_zero_cmd_ << " seconds so set velocity to zero and disabled publishing");
+						publish_cmd = false;
+						ucar_ctrl_->SetDesiredPltfVelocity( 0.0, 0.0, 0.0, 0.0);
 					}
 				}
+				else
+				{
+					// Set desired value for Plattform Velocity to zero (setpoint setting)
+					ROS_ERROR_STREAM("Did not receive a nonzero cmd within the waittime of " << wait_time_until_zero_cmd_ << " seconds so set velocity to zero and disable publishing");
+					publish_cmd = false;
+					ucar_ctrl_->SetDesiredPltfVelocity( 0.0, 0.0, 0.0, 0.0);
+				}
+				ROS_ERROR("END if statement for disabled publishing");
 			}
 
 			time_of_last_twist_cmd_ = ros::Time::now();
 
+			// from here this is the old stuff
 			if(publish_cmd)
 			{
+				//ROS_ERROR("BEGIN if statement for enabled publishing");
 				iwatchdog_ = 0;			
 
 				// controller expects velocities in mm/s, ROS works with SI-Units -> convert
@@ -282,9 +307,11 @@ class NodeClass
 					// Set desired value for Plattform Velocity to zero (setpoint setting)
 					ucar_ctrl_->SetDesiredPltfVelocity( 0.0, 0.0, 0.0, 0.0);
 					// ToDo: last value (0.0) is not used anymore --> remove from interface
-					ROS_DEBUG("Forced platform-velocity cmds to zero");
+					ROS_ERROR("Forced platform-velocity cmds to zero");
 				}
+				//ROS_ERROR("END if statement for enabled publishing");
 			}
+			ROS_ERROR("-----END Twist callback!-----");
 			
 		}
 

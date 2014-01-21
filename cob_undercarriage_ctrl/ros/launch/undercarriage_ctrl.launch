@@ -2,8 +2,9 @@
 <launch>
 
 	<!-- start undercarriage ctrlr -->
-	<node pkg="cob_undercarriage_ctrl" type="cob_undercarriage_ctrl_node" name="undercarriage_ctrl_node" respawn="false" output="screen">
+	<node pkg="cob_undercarriage_ctrl" ns="base_controller" type="cob_undercarriage_ctrl_node" name="undercarriage_ctrl_node" respawn="false" output="screen">
 		<remap from="command" to="command_direct"/>
+		<param name="zero_waittime" type="double" value="0.05"/>
 	</node>
 
 </launch>

@@ -121,7 +121,11 @@ class NodeClass
     	double 	vel_x_rob_last_, vel_y_rob_last_, vel_theta_rob_last_; //save velocities for better odom calculation
 
     	ros::Time time_of_last_twist_cmd_;	// time-stamp when the last twist commmand has been received
+    	ros::Time time_of_last_zero_twist_cmd_;	// time-stamp when the last zero twist commmand has been received
+    	ros::Time time_of_first_zero_twist_cmd_;	// time-stamp when the last zero twist commmand has been received
     	double wait_time_until_zero_cmd_;   // time interval to wait for a nonzero twist command to publish after a zero command has been received 
+	bool first_time_zero_;
+	int zero_cmd_counter_;
 		
 		int m_iNumJoints;
 		
@@ -130,6 +134,8 @@ class NodeClass
         // Constructor
         NodeClass()
         {
+			first_time_zero_ = false;
+			zero_cmd_counter_ = 0;
 			pnh_ = ros::NodeHandle("~");
 			// initialization of variables
 			is_initialized_bool_ = false;
@@ -233,24 +239,47 @@ class NodeClass
 			double vx_cmd_mms, vy_cmd_mms, w_cmd_rads;
 			bool publish_cmd;
 
-			ROS_ERROR("-----START Twist callback!-----");
+			//ROS_ERROR("-----START Twist callback!-----");
 			
 			if(msg->linear.x != 0 || msg->linear.y != 0 || msg->angular.z != 0)
 			{
+				if(first_time_zero_)
+				{
+					ROS_ERROR("--------------------------------------------------------------------------");
+					ROS_ERROR_STREAM("Received a nonzero cmd after the first zero command within " << ros::Time::now().toSec() - time_of_first_zero_twist_cmd_.toSec() << " seconds");
+					ROS_ERROR("--------------------------------------------------------------------------");
+				}
 				// we subscribed to a nonzero twist command, so we can continue publishing
 				publish_cmd = true;
+				first_time_zero_ = false;
+				zero_cmd_counter_ = 0;
 				//ROS_ERROR("Received a nonzero cmd so enable publishing");
 			}
 			else
 			{
-				// stop publishing and wait for nonzero twist cmd
-				publish_cmd = false;
-				ROS_ERROR("Received a zero cmd so now waiting for nonzero cmd and stop publishing");
+				
+				if(msg->linear.x == 0 && msg->linear.y == 0 && msg->angular.z == 0)
+				{
+					// stop publishing and wait for nonzero twist cmd
+					publish_cmd = false;
+					if(zero_cmd_counter_ == 0)
+					{
+						first_time_zero_ = true;
+    						time_of_first_zero_twist_cmd_ = ros::Time::now();
+					}
+					else
+					{
+						first_time_zero_ = false;
+					}
+					zero_cmd_counter_++;
+					//ROS_ERROR_STREAM("Received zero cmd number " << zero_cmd_counter_ << " with " << ros::Time::now().toSec() - time_of_last_zero_twist_cmd_.toSec() << " seconds since last zero cmd");//, so now waiting for nonzero cmd and stop publishing");
+    					time_of_last_zero_twist_cmd_ = ros::Time::now();
+				}
 			}
 			
 			if(!publish_cmd)
 			{
-				ROS_ERROR("BEGIN if statement for disabled publishing");
+				//ROS_ERROR("BEGIN if statement for disabled publishing");
 				// watchdog to prevent shaking behaviour caused by zero-commands after optimizeBand from EbandLocal-Planner failed
 				if(ros::Time::now().toSec() - time_of_last_twist_cmd_.toSec() < wait_time_until_zero_cmd_)
 				{
@@ -258,14 +287,19 @@ class NodeClass
 					if(msg->linear.x != 0 || msg->linear.y != 0 || msg->angular.z != 0)
 					{
 						publish_cmd = true;
-						ROS_ERROR("Received a nonzero cmd so RE-enable publishing");
+						//ROS_ERROR("Received a nonzero cmd so RE-enable publishing");
 					}
 					else
 					{
 						// Set desired value for Plattform Velocity to zero (setpoint setting)
-						ROS_ERROR_STREAM("Received another zero cmd within the waittime of " << wait_time_until_zero_cmd_ << " seconds so set velocity to zero and disabled publishing");
+						ROS_ERROR_STREAM("Received zero cmd number " << zero_cmd_counter_ <<" within the waittime of " << wait_time_until_zero_cmd_ << " seconds so set velocity to zero and disabled publishing");
 						publish_cmd = false;
-						ucar_ctrl_->SetDesiredPltfVelocity( 0.0, 0.0, 0.0, 0.0);
+						if(zero_cmd_counter_ == 4)
+						{
+							ROS_ERROR_STREAM("RECEIVVED 4 CONSECUTIVE ZERO CMDS -> STOP!");
+							ucar_ctrl_->SetDesiredPltfVelocity( 0.0, 0.0, 0.0, 0.0);	
+						}
+
 					}
 				}
 				else
@@ -273,9 +307,10 @@ class NodeClass
 					// Set desired value for Plattform Velocity to zero (setpoint setting)
 					ROS_ERROR_STREAM("Did not receive a nonzero cmd within the waittime of " << wait_time_until_zero_cmd_ << " seconds so set velocity to zero and disable publishing");
 					publish_cmd = false;
+					zero_cmd_counter_ = 0;
 					ucar_ctrl_->SetDesiredPltfVelocity( 0.0, 0.0, 0.0, 0.0);
 				}
-				ROS_ERROR("END if statement for disabled publishing");
+				//ROS_ERROR("END if statement for disabled publishing");
 			}
 
 			time_of_last_twist_cmd_ = ros::Time::now();
@@ -311,7 +346,7 @@ class NodeClass
 				}
 				//ROS_ERROR("END if statement for enabled publishing");
 			}
-			ROS_ERROR("-----END Twist callback!-----");
+			//ROS_ERROR("-----END Twist callback!-----");
 			
 		}
 
